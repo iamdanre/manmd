@@ -1,0 +1,2 @@
+# manmd
+man  > .md
