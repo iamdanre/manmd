@@ -1,4 +1,4 @@
-# manmd.plugin.zsh
+# manmd.plugin.bash ＼（＾▽＾）／
 # convert man pages to markdown with basic section parsing.
 # this plugin sources the shared library layer for multi-shell support.
 #
@@ -11,7 +11,6 @@
 #   manmd <section> <command> --copy
 #   manclip <command>
 #   manclip <section> <command>
-#   -c is shorthand for --copy
 #
 # examples:
 #   manmd ls
@@ -22,10 +21,10 @@
 #   manclip caffeinate
 #
 # install:
-#   1. save this file somewhere on your fpath/plugin path, e.g.:
-#        ~/.zsh/plugins/manmd/manmd.plugin.zsh
-#   2. source it from ~/.zshrc:
-#        source ~/.zsh/plugins/manmd/manmd.plugin.zsh
+#   1. save this file somewhere on your bash plugins directory, e.g.:
+#        ~/.bash/plugins/manmd/manmd.plugin.bash
+#   2. source it from ~/.bashrc:
+#        source ~/.bash/plugins/manmd/manmd.plugin.bash
 #
 # notes:
 # - parsing of man pages is heuristic because output format varies by platform.
@@ -36,23 +35,54 @@
 #     wsl: clip.exe
 
 # find the library directory relative to this script
-_manmd_lib_dir="${0:h}/lib"
+_manmd_lib_dir="$(dirname "${BASH_SOURCE[0]}")/lib"
 
 # source shared core library
 if [[ -f "$_manmd_lib_dir/manmd-core.sh" ]]; then
-	emulate -L zsh
-	builtin source "$_manmd_lib_dir/manmd-core.sh"
+	source "$_manmd_lib_dir/manmd-core.sh"
 else
-	echo "manmd: failed to source core library at $_manmd_lib_dir/manmd-core.sh" >&2
+	echo "manmd: failed to source core library at $_manmd_lib_dir/manmd-core.sh" >&2 # (╥_╥)
 	return 1
 fi
 
-# zsh-specific wrappers for functions that need special handling
-# _manmd_render_markdown is wrapped to use zsh-specific syntax for better integration
+# bash-specific wrappers for functions that need special handling
 
-_manmd_render_markdown_zsh() {
-	emulate -L zsh
-	setopt pipefail
+# override _manmd_copy to use bash-compatible printf
+_manmd_copy_bash() {
+	local data="$1"
+
+	if command -v pbcopy >/dev/null 2>&1; then
+		printf '%s' "$data" | pbcopy
+		return $?
+	fi
+
+	if command -v wl-copy >/dev/null 2>&1; then
+		printf '%s' "$data" | wl-copy
+		return $?
+	fi
+
+	if command -v xclip >/dev/null 2>&1; then
+		printf '%s' "$data" | xclip -selection clipboard
+		return $?
+	fi
+
+	if command -v xsel >/dev/null 2>&1; then
+		printf '%s' "$data" | xsel --clipboard --input
+		return $?
+	fi
+
+	if command -v clip.exe >/dev/null 2>&1; then
+		printf '%s' "$data" | clip.exe
+		return $?
+	fi
+
+	echo "manmd: no clipboard tool found (tried pbcopy, wl-copy, xclip, xsel, clip.exe)" >&2 # (╥_╥)
+	return 1
+}
+
+# override _manmd_render_markdown with bash-specific version
+_manmd_render_markdown_bash() {
+	set -o pipefail
 
 	local title="$1"
 	local invocation="$2"
@@ -61,9 +91,9 @@ _manmd_render_markdown_zsh() {
 
 	date_str="$(date +%F)"
 
-	name="$(print -r -- "$rendered" | _manmd_extract_section "NAME" 2>/dev/null | _manmd_trim)"
-	synopsis="$(print -r -- "$rendered" | _manmd_extract_section "SYNOPSIS" 2>/dev/null)"
-	description="$(print -r -- "$rendered" | _manmd_extract_section "DESCRIPTION" 2>/dev/null)"
+	name="$(printf '%s' "$rendered" | _manmd_extract_section "NAME" 2>/dev/null | _manmd_trim)"
+	synopsis="$(printf '%s' "$rendered" | _manmd_extract_section "SYNOPSIS" 2>/dev/null)"
+	description="$(printf '%s' "$rendered" | _manmd_extract_section "DESCRIPTION" 2>/dev/null)"
 
 	markdown="# \`$title\`
 
@@ -85,7 +115,7 @@ $name
 ## SYNOPSIS
 
 \`\`\`text
-$(print -r -- "$synopsis" | _manmd_escape_code_fence)
+$(printf '%s' "$synopsis" | _manmd_escape_code_fence)
 \`\`\`
 "
 	fi
@@ -95,7 +125,7 @@ $(print -r -- "$synopsis" | _manmd_escape_code_fence)
 
 ## DESCRIPTION
 
-$(print -r -- "$description")
+$(printf '%s' "$description")
 "
 	fi
 
@@ -107,21 +137,27 @@ $(print -r -- "$description")
 <summary>Show raw rendered man page</summary>
 
 \`\`\`text
-$(print -r -- "$rendered" | _manmd_escape_code_fence)
+$(printf '%s' "$rendered" | _manmd_escape_code_fence)
 \`\`\`
 
 </details>
 "
 
-	print -r -- "$markdown"
+	printf '%s' "$markdown"
 }
 
-# use zsh-specific version for rendering, use shared library version for copy
-alias _manmd_render_markdown=_manmd_render_markdown_zsh
+# use bash-specific versions by reassigning functions
+_manmd_copy() { _manmd_copy_bash "$@"; }
+_manmd_render_markdown() { _manmd_render_markdown_bash "$@"; }
+
+# check if string is a valid man section number
+_manmd_is_section() {
+	local section="$1"
+	[[ "$section" =~ ^[0-9]$ ]]
+}
 
 manmd() {
-	emulate -L zsh
-	setopt pipefail no_unset
+	set -o pipefail
 
 	local section="" cmd="" out="" mode="file"
 	local rendered markdown title invocation
@@ -131,7 +167,8 @@ manmd() {
 		return 0
 	fi
 
-	if [[ "$1" == <-> ]]; then
+	# check if first argument is a section number
+	if _manmd_is_section "$1"; then
 		section="$1"
 		shift
 	fi
@@ -153,7 +190,7 @@ manmd() {
 
 	if [[ $# -eq 1 ]]; then
 		case "$1" in
-		-c|--copy) mode="copy" ;;
+		-c | --copy) mode="copy" ;;
 		*) out="$1" ;;
 		esac
 	fi
@@ -199,20 +236,18 @@ manmd() {
 		_manmd_copy "$markdown" || return 1
 		echo "Copied Markdown man page for '$title' to clipboard"
 	else
-		print -r -- "$markdown" >"$out"
+		printf '%s' "$markdown" >"$out"
 		echo "Wrote Markdown man page for '$title' to $out"
 	fi
 }
 
 manclip() {
-	emulate -L zsh
-
 	if [[ $# -eq 0 ]]; then
 		_manmd_usage >&2
 		return 1
 	fi
 
-	if [[ "$1" == <-> ]]; then
+	if _manmd_is_section "$1"; then
 		[[ $# -eq 2 ]] || {
 			_manmd_usage >&2
 			return 1
